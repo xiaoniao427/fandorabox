@@ -4,7 +4,7 @@ compatibility_date = "2026-02-26"
 
 # 变量
 [vars]
-ORIGIN_HOST = "fandorabox.net"
+ORIGIN_HOST = "https://fandorabox.net"
 #OFFLINE_MODE = "false"  # 设为 "true" 启用离线模拟（测试用，生产环境不要启用）
 #SYNC_PASSWORD = "your-secure-password"   # 替换为实际密码（不要直接在仓库里填，同步到cloudflare_worker后在worker里填）
 
