@@ -9,9 +9,9 @@ import { handleListAllCache } from './custom-handlers.js';
 //导入离线暂存相关逻辑
 import { handleOfflineRequest, syncToOriginalServer } from './offline-handler.js';
 
-const TARGET_HOST = 'https://fandorabox.net';
+const TARGET_HOST = globalThis.ORIGIN_HOST || 'https://fandorabox.net';
 const TARGET_DOMAIN = new URL(TARGET_HOST).hostname;
-const PROXY_DOMAIN = 'fandorabox.tzhd427.dpdns.org';
+const PROXY_DOMAIN = globalThis.PROXY_DOMAIN || new URL(TARGET_HOST).hostname; // 可选，用于替换响应中的域名
 const CACHE_TTL = 86400; // 24小时
 const cache = caches.default;
 
@@ -21,15 +21,16 @@ const SYNC_PASSWORD = globalThis.SYNC_PASSWORD;
 const USER_DATA = globalThis.USER_DATA;
 const SESSIONS = globalThis.SESSIONS;
 const PENDING_SCORES = globalThis.PENDING_SCORES;
-// 注意：PENDING_REQUESTS 已彻底移除，不再使用
 const LIST_CACHE = globalThis.LIST_CACHE;
+const MACHINE_SESSIONS = globalThis.MACHINE_SESSIONS; // 新增：用于机台登录会话
 
 const bindings = {
   OFFLINE_MODE,
   USER_DATA,
   SESSIONS,
   PENDING_SCORES,
-  LIST_CACHE
+  LIST_CACHE,
+  MACHINE_SESSIONS
 };
 
 addEventListener('fetch', event => {
@@ -38,12 +39,74 @@ addEventListener('fetch', event => {
 
 // 定时触发器（每30分钟）
 addEventListener('scheduled', event => {
-  event.waitUntil(syncToOriginalServer(bindings));
+  event.waitUntil(syncToOriginalServer(bindings, TARGET_HOST));
 });
 
 async function handleRequest(request, event) {
   try {
     const url = new URL(request.url);
+
+    // ========== 新增：机台登录相关 API（始终返回模拟响应）==========
+    if (url.pathname === '/api/account/MachineInfo' && request.method === 'GET') {
+      const token = url.searchParams.get('machine-id-token');
+      if (!token) return new Response('Bad Request', { status: 400 });
+      const data = await MACHINE_SESSIONS.get(token, 'json');
+      if (!data) return new Response('Not Found', { status: 404 });
+      const responseBody = {
+        IP: "255.168.127.1",
+        Place: data.place || "上海市，长宁区",
+        MachineInfo: data.machineInfo || "GIGO秋叶原1号馆114514鸡"
+      };
+      return new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (url.pathname === '/api/account/MachineLoginPermit' && request.method === 'GET') {
+      const cookie = request.headers.get('Cookie') || '';
+      if (!cookie.includes('token=')) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      const token = url.searchParams.get('machine-id-token');
+      if (!token) return new Response('Bad Request', { status: 400 });
+      const data = await MACHINE_SESSIONS.get(token, 'json');
+      if (!data) return new Response('Not Found', { status: 404 });
+      data.confirmed = true;
+      await MACHINE_SESSIONS.put(token, JSON.stringify(data));
+      return new Response(null, { status: 200 });
+    }
+
+    if (url.pathname === '/api/account/MachineRegister' && request.method === 'GET') {
+      const machineInfo = url.searchParams.get('MachineInfo');
+      if (!machineInfo) return new Response('Bad Request', { status: 400 });
+      const guid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2)}`;
+      await MACHINE_SESSIONS.put(guid, JSON.stringify({
+        machineInfo,
+        place: "上海市，长宁区", //别问为什么
+        confirmed: false
+      }));
+      const qrContent = `https://majdata.net/...?machine-id-token=${guid}`;
+      return new Response(JSON.stringify({ MachineID: guid, QRContent: qrContent }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (url.pathname === '/api/account/MachineLoginCheck' && request.method === 'GET') {
+      const machineId = url.searchParams.get('MachineID');
+      if (!machineId) return new Response('Bad Request', { status: 400 });
+      const data = await MACHINE_SESSIONS.get(machineId, 'json');
+      if (!data) return new Response('Not Found', { status: 404 });
+      if (data.confirmed) {
+        const headers = new Headers();
+        headers.set('Set-Cookie', 'machine-token=amns114514; Path=/; HttpOnly');
+        return new Response(null, { status: 200, headers });
+      } else {
+        return new Response(null, { status: 202 });
+      }
+    }
+    // ========== 机台登录 API 结束 ==========
 
     // 手动同步端点（需密码鉴权）
     if (url.pathname === '/api/manual-sync') {
@@ -61,7 +124,7 @@ async function handleRequest(request, event) {
         });
       }
       try {
-        await syncToOriginalServer(bindings);
+        await syncToOriginalServer(bindings, TARGET_HOST);
         return new Response(JSON.stringify({ success: true, message: '同步完成' }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
@@ -74,7 +137,7 @@ async function handleRequest(request, event) {
       }
     }
 
-    // 离线模式处理（不再需要传入 event，因为已无异步记录）
+    // 离线模式处理
     if (OFFLINE_MODE) {
       const offlineResponse = await handleOfflineRequest(request, bindings);
       if (offlineResponse) return offlineResponse;
@@ -92,7 +155,7 @@ async function handleRequest(request, event) {
       return getCustomNoticeResponse();
     }
 
-    // 曲目列表暂存
+    // 铺面列表 - 直接返回静态数据
     const listAllResponse = await handleListAllCache(request);
     if (listAllResponse) return listAllResponse;
 

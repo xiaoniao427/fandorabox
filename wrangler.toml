@@ -4,6 +4,7 @@ compatibility_date = "2026-02-26"
 
 # 变量
 [vars]
+ORIGIN_HOST = "https://fandorabox.net"
 #OFFLINE_MODE = "false"  # 设为 "true" 启用离线模拟（测试用，生产环境不要启用）
 #SYNC_PASSWORD = "your-secure-password"   # 替换为实际密码（不要直接在仓库里填，同步到cloudflare_worker后在worker里填）
 
@@ -20,6 +21,13 @@ id = "d96787ddbe764df79cdccdd0b4535032"   # fork后替换为自己的ID
 binding = "PENDING_SCORES"
 id = "60e1434d441e4268a57912b052985e6f"   # fork后替换为自己的ID
 
+[[kv_namespaces]]
+binding = "MACHINE_SESSIONS"
+id = "112c8296674e457bafdc0e2300d37d8d"   # 替换为实际 ID
+
+[[kv_namespaces]]
+binding = "OAUTH_SESSIONS"
+id = "c634670eb8824e84afeba5fab94302fe"   # 替换为实际 ID
 # 同步有bug，修好再动
 # [triggers]
 # crons = ["*/30 * * * *"]  # 每30分钟尝试同步一次（可修改，不建议频率调太短或太长，太短会导致原站负载增加，太长会导致CPU时钟超过免费用量自动终止）
