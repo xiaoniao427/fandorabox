@@ -8,21 +8,30 @@ import { getCustomNoticeResponse } from './notice-modifier.js';
 import { handleListAllCache } from './custom-handlers.js';
 //导入离线暂存相关逻辑
 import { handleOfflineRequest, syncToOriginalServer } from './offline-handler.js';
+//导入扫码登录相关逻辑
+import { handleAuthRequest } from './auth-handler.js';
 
-const TARGET_HOST = globalThis.ORIGIN_HOST || 'https://fandorabox.net';
+// 从环境变量获取配置
+let rawOrigin = globalThis.ORIGIN_HOST || 'https://fandorabox.net';
+if (!rawOrigin.startsWith('http://') && !rawOrigin.startsWith('https://')) {
+  rawOrigin = 'https://' + rawOrigin;
+}
+const TARGET_HOST = rawOrigin;
 const TARGET_DOMAIN = new URL(TARGET_HOST).hostname;
-const PROXY_DOMAIN = globalThis.PROXY_DOMAIN || new URL(TARGET_HOST).hostname; // 可选，用于替换响应中的域名
-const CACHE_TTL = 86400; // 24小时
+const PROXY_DOMAIN = globalThis.PROXY_DOMAIN || TARGET_DOMAIN;
+const FRONTEND_HOST = globalThis.FRONTEND_HOST || 'https://your-frontend.com'; // 用于二维码跳转
+const CACHE_TTL = 86400;
 const cache = caches.default;
 
-// 从全局获取绑定的 KV 和变量
+// KV 绑定
 const OFFLINE_MODE = globalThis.OFFLINE_MODE === 'true';
 const SYNC_PASSWORD = globalThis.SYNC_PASSWORD;
 const USER_DATA = globalThis.USER_DATA;
 const SESSIONS = globalThis.SESSIONS;
 const PENDING_SCORES = globalThis.PENDING_SCORES;
 const LIST_CACHE = globalThis.LIST_CACHE;
-const MACHINE_SESSIONS = globalThis.MACHINE_SESSIONS; // 新增：用于机台登录会话
+const MACHINE_SESSIONS = globalThis.MACHINE_SESSIONS;
+const OAUTH_SESSIONS = globalThis.OAUTH_SESSIONS;
 
 const bindings = {
   OFFLINE_MODE,
@@ -30,14 +39,14 @@ const bindings = {
   SESSIONS,
   PENDING_SCORES,
   LIST_CACHE,
-  MACHINE_SESSIONS
+  MACHINE_SESSIONS,
+  OAUTH_SESSIONS
 };
 
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request, event));
 });
 
-// 定时触发器（每30分钟）
 addEventListener('scheduled', event => {
   event.waitUntil(syncToOriginalServer(bindings, TARGET_HOST));
 });
@@ -46,67 +55,9 @@ async function handleRequest(request, event) {
   try {
     const url = new URL(request.url);
 
-    // ========== 新增：机台登录相关 API（始终返回模拟响应）==========
-    if (url.pathname === '/api/account/MachineInfo' && request.method === 'GET') {
-      const token = url.searchParams.get('machine-id-token');
-      if (!token) return new Response('Bad Request', { status: 400 });
-      const data = await MACHINE_SESSIONS.get(token, 'json');
-      if (!data) return new Response('Not Found', { status: 404 });
-      const responseBody = {
-        IP: "255.168.127.1",
-        Place: data.place || "上海市，长宁区",
-        MachineInfo: data.machineInfo || "GIGO秋叶原1号馆114514鸡"
-      };
-      return new Response(JSON.stringify(responseBody), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    if (url.pathname === '/api/account/MachineLoginPermit' && request.method === 'GET') {
-      const cookie = request.headers.get('Cookie') || '';
-      if (!cookie.includes('token=')) {
-        return new Response('Unauthorized', { status: 401 });
-      }
-      const token = url.searchParams.get('machine-id-token');
-      if (!token) return new Response('Bad Request', { status: 400 });
-      const data = await MACHINE_SESSIONS.get(token, 'json');
-      if (!data) return new Response('Not Found', { status: 404 });
-      data.confirmed = true;
-      await MACHINE_SESSIONS.put(token, JSON.stringify(data));
-      return new Response(null, { status: 200 });
-    }
-
-    if (url.pathname === '/api/account/MachineRegister' && request.method === 'GET') {
-      const machineInfo = url.searchParams.get('MachineInfo');
-      if (!machineInfo) return new Response('Bad Request', { status: 400 });
-      const guid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2)}`;
-      await MACHINE_SESSIONS.put(guid, JSON.stringify({
-        machineInfo,
-        place: "上海市，长宁区", //别问为什么
-        confirmed: false
-      }));
-      const qrContent = `https://majdata.net/...?machine-id-token=${guid}`;
-      return new Response(JSON.stringify({ MachineID: guid, QRContent: qrContent }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    if (url.pathname === '/api/account/MachineLoginCheck' && request.method === 'GET') {
-      const machineId = url.searchParams.get('MachineID');
-      if (!machineId) return new Response('Bad Request', { status: 400 });
-      const data = await MACHINE_SESSIONS.get(machineId, 'json');
-      if (!data) return new Response('Not Found', { status: 404 });
-      if (data.confirmed) {
-        const headers = new Headers();
-        headers.set('Set-Cookie', 'machine-token=amns114514; Path=/; HttpOnly');
-        return new Response(null, { status: 200, headers });
-      } else {
-        return new Response(null, { status: 202 });
-      }
-    }
-    // ========== 机台登录 API 结束 ==========
+    // ========== 处理扫码登录相关 API ==========
+    const authResponse = await handleAuthRequest(request, bindings, FRONTEND_HOST);
+    if (authResponse) return authResponse;
 
     // 手动同步端点（需密码鉴权）
     if (url.pathname === '/api/manual-sync') {
