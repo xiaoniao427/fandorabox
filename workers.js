@@ -12,6 +12,8 @@ import { handleOfflineRequest, syncToOriginalServer } from './offline-handler.js
 import { handleAuthRequest } from './auth-handler.js';
 //导入授权登录前端页面相关逻辑
 import { renderAuthConfirmPage, renderLoginPage } from './auth-page.js';
+
+
 // 从环境变量获取配置
 let rawOrigin = globalThis.ORIGIN_HOST || 'https://fandorabox.net';
 if (!rawOrigin.startsWith('http://') && !rawOrigin.startsWith('https://')) {
@@ -20,7 +22,7 @@ if (!rawOrigin.startsWith('http://') && !rawOrigin.startsWith('https://')) {
 const TARGET_HOST = rawOrigin;
 const TARGET_DOMAIN = new URL(TARGET_HOST).hostname;
 const PROXY_DOMAIN = globalThis.PROXY_DOMAIN || TARGET_DOMAIN;
-const FRONTEND_HOST = globalThis.FRONTEND_HOST || 'https://your-frontend.com'; // 用于二维码跳转
+const FRONTEND_HOST = globalThis.FRONTEND_HOST || 'https://your-frontend.com';
 const CACHE_TTL = 86400;
 const cache = caches.default;
 
@@ -30,7 +32,6 @@ const SYNC_PASSWORD = globalThis.SYNC_PASSWORD;
 const USER_DATA = globalThis.USER_DATA;
 const SESSIONS = globalThis.SESSIONS;
 const PENDING_SCORES = globalThis.PENDING_SCORES;
-const LIST_CACHE = globalThis.LIST_CACHE;
 const MACHINE_SESSIONS = globalThis.MACHINE_SESSIONS;
 const OAUTH_SESSIONS = globalThis.OAUTH_SESSIONS;
 
@@ -39,14 +40,27 @@ const bindings = {
   USER_DATA,
   SESSIONS,
   PENDING_SCORES,
-  LIST_CACHE,
   MACHINE_SESSIONS,
   OAUTH_SESSIONS
 };
 
-// 工具函数：生成随机 ID
+/**
+ * Generate a short unique identifier suitable for use as a session ID.
+ * @returns {string} A unique identifier string.
 function generateId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2)}`;
+}
+
+/**
+ * Compute the MD5 hash of a string.
+ * @param {string} str - The input string to hash.
+ * @returns {Promise<string>} The MD5 digest as a lowercase hexadecimal string.
+ */
+async function md5(str) {
+  const msgUint8 = new TextEncoder().encode(str);
+  const hashBuffer = await crypto.subtle.digest('MD5', msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 addEventListener('fetch', event => {
@@ -57,6 +71,20 @@ addEventListener('scheduled', event => {
   event.waitUntil(syncToOriginalServer(bindings, TARGET_HOST));
 });
 
+/**
+ * Handle an incoming fetch request: serve login/auth pages and APIs, perform manual/offline sync and caching, or reverse-proxy the request to the configured target with post-processing.
+ *
+ * This function may:
+ * - Render the frontend login or auth confirmation pages.
+ * - Authenticate users in offline mode (create or validate credentials, issue a session cookie).
+ * - Handle auth-related requests, manual synchronization, offline request handling, and static endpoints like /ads.txt and /api/notice.
+ * - Serve a cached root (/) response and store successful proxied root responses to cache.
+ * - Forward other requests to the target origin, inject ad content into HTML responses, rewrite Set-Cookie headers (remove Domain), rewrite redirect Location headers to the proxy domain when appropriate, remove Content-Security-Policy headers, and add Access-Control-Allow-Origin: *.
+ *
+ * @param {Request} request - The incoming request to handle.
+ * @param {FetchEvent} event - The fetch event associated with the request.
+ * @returns {Response} A Response for the request (page, JSON, or proxied response) after any applicable authentication, caching, injection, and header rewrites.
+ */
 async function handleRequest(request, event) {
   try {
     const url = new URL(request.url);
@@ -66,7 +94,7 @@ async function handleRequest(request, event) {
       return renderLoginPage();
     }
 
-    // ========== 登录 API ==========
+    // ========== 登录 API（离线模拟模式） ==========
     if (url.pathname === '/api/account/login' && request.method === 'POST') {
       const body = await request.json().catch(() => null);
       if (!body) {
@@ -77,19 +105,20 @@ async function handleRequest(request, event) {
         return new Response('Bad Request: missing username or password', { status: 400 });
       }
 
+      const hashedPassword = await md5(password);
       const storedPassword = await USER_DATA.get(`cred:${username}`);
-      if (storedPassword && storedPassword !== password) {
+      
+      if (!storedPassword) {
+        await USER_DATA.put(`cred:${username}`, hashedPassword, { expirationTtl: 30 * 86400 });
+      } else if (storedPassword !== hashedPassword) {
         return new Response('Unauthorized', { status: 401 });
       }
-      if (!storedPassword) {
-        await USER_DATA.put(`cred:${username}`, password, { expirationTtl: 30 * 86400 });
-      }
 
-      const userToken = generateId();
-      await SESSIONS.put(userToken, username, { expirationTtl: 7 * 86400 });
+      const sessionId = generateId();
+      await SESSIONS.put(sessionId, username, { expirationTtl: 7 * 86400 });
 
       const headers = new Headers();
-      headers.set('Set-Cookie', `token=${userToken}; Path=/; HttpOnly; Max-Age=604800`);
+      headers.set('Set-Cookie', `connect.sid=${sessionId}; Path=/; HttpOnly; Max-Age=604800`);
       headers.set('Content-Type', 'application/json');
       const responseBody = {
         username,
@@ -111,7 +140,7 @@ async function handleRequest(request, event) {
     const authResponse = await handleAuthRequest(request, bindings, FRONTEND_HOST);
     if (authResponse) return authResponse;
 
-    // 手动同步端点（需密码鉴权）
+    // 手动同步端点
     if (url.pathname === '/api/manual-sync') {
       if (!SYNC_PASSWORD) {
         return new Response(JSON.stringify({ success: false, error: 'Sync password not configured' }), {
@@ -185,7 +214,7 @@ async function handleRequest(request, event) {
 
     let response = await fetch(newRequest);
 
-    // 广告插入（仅 HTML）
+    // 广告插入
     const contentType = response.headers.get('Content-Type') || '';
     if (contentType.includes('text/html')) {
       const rewriter = new HTMLRewriter().on('main', {
