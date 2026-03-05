@@ -44,19 +44,6 @@ const bindings = {
   OAUTH_SESSIONS
 };
 
-// 工具函数：生成随机 ID（用于 sessionId）
-function generateId() {
-  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2)}`;
-}
-
-// 异步 MD5 哈希（使用 Web Crypto API）
-async function md5(str) {
-  const msgUint8 = new TextEncoder().encode(str);
-  const hashBuffer = await crypto.subtle.digest('MD5', msgUint8);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request, event));
 });
@@ -68,48 +55,6 @@ addEventListener('scheduled', event => {
 async function handleRequest(request, event) {
   try {
     const url = new URL(request.url);
-
-    // ========== 前端登录页面 ==========
-    if (url.pathname === '/login' && request.method === 'GET') {
-      return renderLoginPage();
-    }
-
-    // ========== 登录 API（离线模拟模式） ==========
-    if (url.pathname === '/api/account/login' && request.method === 'POST') {
-      const body = await request.json().catch(() => null);
-      if (!body) {
-        return new Response('Bad Request: invalid JSON', { status: 400 });
-      }
-      const { username, password } = body;
-      if (!username || !password) {
-        return new Response('Bad Request: missing username or password', { status: 400 });
-      }
-
-      const hashedPassword = await md5(password);
-      const storedPassword = await USER_DATA.get(`cred:${username}`);
-      
-      if (!storedPassword) {
-        await USER_DATA.put(`cred:${username}`, hashedPassword, { expirationTtl: 30 * 86400 });
-      } else if (storedPassword !== hashedPassword) {
-        return new Response('Unauthorized', { status: 401 });
-      }
-
-      const sessionId = generateId();
-      await SESSIONS.put(sessionId, username, { expirationTtl: 7 * 86400 });
-
-      const headers = new Headers();
-      headers.set('Set-Cookie', `connect.sid=${sessionId}; Path=/; HttpOnly; Max-Age=604800`);
-      headers.set('Content-Type', 'application/json');
-      const responseBody = {
-        username,
-        isAdmin: false,
-        avatarUrl: `/api/account/Avatar/${username}`
-      };
-      return new Response(JSON.stringify(responseBody), {
-        status: 200,
-        headers
-      });
-    }
 
     // ========== 前端确认页面 ==========
     if (url.pathname === '/auth/confirm' && request.method === 'GET') {
