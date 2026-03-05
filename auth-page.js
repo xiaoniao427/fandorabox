@@ -101,7 +101,15 @@ export function renderAuthConfirmPage() {
     </script>
 </body>
 </html>`;
-  return new Response(html, {
-    headers: { 'Content-Type': 'text/html;charset=UTF-8' }
+// auth-page.js
+return new Response(html, {
+  headers: {
+    'Content-Type': 'text/html;charset=UTF-8',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'Pragma': 'no-cache',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none';"
+  }
   });
 }
