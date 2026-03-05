@@ -24,34 +24,33 @@ export async function handleAuthRequest(request, bindings, frontendHost) {
   const path = url.pathname;
   const method = request.method;
 
-  // ---------- 机器注册 POST /api/machine/registry ----------
-  if (path === '/api/machine/registry' && method === 'POST') {
-    const body = await request.json();
-    const { name, description } = body;
-    if (!name || !description) {
-      return new Response('Bad Request: missing name or description', { status: 400 });
-    }
-
-    const machineId = generateId();
-    const machineToken = generateId();
-
-    await MACHINE_SESSIONS.put(machineId, JSON.stringify({
-      machineId,
-      machineToken,
-      name,
-      description,
-      place: '上海市，长宁区',  // 可扩展为从请求推断
-      lastActive: Date.now()
-    }), { expirationTtl: 300 }); // 5分钟无活动过期
-
-    // 存储 machineToken 到 machineId 的映射
-    await MACHINE_SESSIONS.put(`token:${machineToken}`, machineId, { expirationTtl: 300 });
-
-    const headers = new Headers();
-    headers.set('Set-Cookie', `machine-token=${machineToken}; Path=/; HttpOnly; Max-Age=300`);
-    headers.set('Set-Cookie', `machine-id=${machineId}; Path=/; HttpOnly; Max-Age=300`);
-    return new Response(null, { status: 200, headers });
+// ---------- 机器注册 POST /api/machine/registry 和 /api/machine/register ----------
+if ((path === '/api/machine/registry' || path === '/api/machine/register') && method === 'POST') {
+  const body = await request.json();
+  const { name, description } = body;
+  if (!name || !description) {
+    return new Response('Bad Request: missing name or description', { status: 400 });
   }
+
+  const machineId = generateId();
+  const machineToken = generateId();
+
+  await MACHINE_SESSIONS.put(machineId, JSON.stringify({
+    machineId,
+    machineToken,
+    name,
+    description,
+    place: '上海市，长宁区',
+    lastActive: Date.now()
+  }), { expirationTtl: 300 });
+
+  await MACHINE_SESSIONS.put(`token:${machineToken}`, machineId, { expirationTtl: 300 });
+
+  const headers = new Headers();
+  headers.set('Set-Cookie', `machine-token=${machineToken}; Path=/; HttpOnly; Max-Age=300`);
+  headers.set('Set-Cookie', `machine-id=${machineId}; Path=/; HttpOnly; Max-Age=300`);
+  return new Response(null, { status: 200, headers });
+}
 
   // ---------- 申请授权会话 POST /api/machine/auth/request ----------
   if (path === '/api/machine/auth/request' && method === 'POST') {
