@@ -11,7 +11,7 @@ import { handleOfflineRequest, syncToOriginalServer } from './offline-handler.js
 //导入扫码登录相关逻辑
 import { handleAuthRequest } from './auth-handler.js';
 //导入授权登录前端页面相关逻辑
-import { renderAuthConfirmPage } from './auth-page.js';
+import { renderAuthConfirmPage, renderLoginPage } from './auth-page.js';
 // 从环境变量获取配置
 let rawOrigin = globalThis.ORIGIN_HOST || 'https://fandorabox.net';
 if (!rawOrigin.startsWith('http://') && !rawOrigin.startsWith('https://')) {
@@ -44,6 +44,11 @@ const bindings = {
   OAUTH_SESSIONS
 };
 
+// 工具函数：生成随机 ID
+function generateId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).substr(2)}`;
+}
+
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request, event));
 });
@@ -56,7 +61,48 @@ async function handleRequest(request, event) {
   try {
     const url = new URL(request.url);
 
-    // ========== 处理前端确认页面 ==========
+    // ========== 前端登录页面 ==========
+    if (url.pathname === '/login' && request.method === 'GET') {
+      return renderLoginPage();
+    }
+
+    // ========== 登录 API ==========
+    if (url.pathname === '/api/account/login' && request.method === 'POST') {
+      const body = await request.json().catch(() => null);
+      if (!body) {
+        return new Response('Bad Request: invalid JSON', { status: 400 });
+      }
+      const { username, password } = body;
+      if (!username || !password) {
+        return new Response('Bad Request: missing username or password', { status: 400 });
+      }
+
+      const storedPassword = await USER_DATA.get(`cred:${username}`);
+      if (storedPassword && storedPassword !== password) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      if (!storedPassword) {
+        await USER_DATA.put(`cred:${username}`, password, { expirationTtl: 30 * 86400 });
+      }
+
+      const userToken = generateId();
+      await SESSIONS.put(userToken, username, { expirationTtl: 7 * 86400 });
+
+      const headers = new Headers();
+      headers.set('Set-Cookie', `token=${userToken}; Path=/; HttpOnly; Max-Age=604800`);
+      headers.set('Content-Type', 'application/json');
+      const responseBody = {
+        username,
+        isAdmin: false,
+        avatarUrl: `/api/account/Avatar/${username}`
+      };
+      return new Response(JSON.stringify(responseBody), {
+        status: 200,
+        headers
+      });
+    }
+
+    // ========== 前端确认页面 ==========
     if (url.pathname === '/auth/confirm' && request.method === 'GET') {
       return renderAuthConfirmPage();
     }
