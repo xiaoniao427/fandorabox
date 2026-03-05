@@ -47,8 +47,8 @@ if ((path === '/api/machine/registry' || path === '/api/machine/register') && me
   await MACHINE_SESSIONS.put(`token:${machineToken}`, machineId, { expirationTtl: 300 });
 
   const headers = new Headers();
-  headers.append('Set-Cookie', `machine-token=${machineToken}; Path=/; HttpOnly; Max-Age=300`);
-  headers.append('Set-Cookie', `machine-id=${machineId}; Path=/; HttpOnly; Max-Age=300`);
+  headers.append('Set-Cookie', `machine-token=${machineToken}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`);
+  headers.append('Set-Cookie', `machine-id=${machineId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`);
   return new Response(null, { status: 200, headers });
 }
 
