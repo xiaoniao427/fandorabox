@@ -44,7 +44,6 @@ export function renderAuthConfirmPage() {
                 return;
             }
 
-            // 获取机台信息
             fetch('/api/machine/auth/info?auth-id=' + encodeURIComponent(authId))
                 .then(res => {
                     if (res.status === 404) throw new Error('授权会话不存在');
@@ -66,7 +65,6 @@ export function renderAuthConfirmPage() {
                     document.getElementById('error').innerText = err.message;
                 });
 
-            // 确认按钮点击
             document.getElementById('confirmBtn').addEventListener('click', function() {
                 this.disabled = true;
                 this.innerText = '处理中...';
@@ -75,17 +73,14 @@ export function renderAuthConfirmPage() {
                 })
                 .then(res => {
                     if (res.status === 200) {
-                        // 成功
                         document.getElementById('info').style.display = 'none';
                         this.style.display = 'none';
                         document.getElementById('success').style.display = 'block';
                     } else if (res.status === 204) {
-                        // 已处理
                         document.getElementById('info').style.display = 'none';
                         this.style.display = 'none';
                         document.getElementById('already').style.display = 'block';
                     } else if (res.status === 401) {
-                        // 未登录，跳转到登录页
                         window.location.href = '/login?auth-id=' + encodeURIComponent(authId);
                     } else {
                         throw new Error('确认失败');
@@ -113,6 +108,7 @@ export function renderLoginPage() {
 <head>
     <meta charset="UTF-8">
     <title>登录</title>
+    <script src="https://cdn.jsdelivr.net/npm/blueimp-md5@2.19.0/js/md5.min.js"></script>
     <style>
         body { font-family: sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
         .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -137,14 +133,15 @@ export function renderLoginPage() {
                 document.getElementById('error').innerText = '请输入用户名';
                 return;
             }
+            // 对密码进行 MD5 加密（与 MajdataPlay 客户端行为一致）
+            const hashedPassword = md5(password);
             fetch('/api/account/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
+                body: JSON.stringify({ username, password: hashedPassword })
             })
             .then(res => {
                 if (res.ok) {
-                    // 登录成功，跳转回确认页
                     const urlParams = new URLSearchParams(window.location.search);
                     const authId = urlParams.get('auth-id');
                     if (authId) {
