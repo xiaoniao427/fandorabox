@@ -85,7 +85,8 @@ export function renderAuthConfirmPage() {
                         this.style.display = 'none';
                         document.getElementById('already').style.display = 'block';
                     } else if (res.status === 401) {
-                        throw new Error('未登录，请先登录');
+                        // 未登录，跳转到登录页
+                        window.location.href = '/login?auth-id=' + encodeURIComponent(authId);
                     } else {
                         throw new Error('确认失败');
                     }
@@ -101,15 +102,66 @@ export function renderAuthConfirmPage() {
     </script>
 </body>
 </html>`;
-// auth-page.js
-return new Response(html, {
-  headers: {
-    'Content-Type': 'text/html;charset=UTF-8',
-    'Cache-Control': 'no-store, no-cache, must-revalidate',
-    'Pragma': 'no-cache',
-    'Referrer-Policy': 'no-referrer',
-    'X-Frame-Options': 'DENY',
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none';"
-  }
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html;charset=UTF-8' }
   });
+}
+
+export function renderLoginPage() {
+  const html = `<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>登录</title>
+    <style>
+        body { font-family: sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+        .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        input { width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; cursor: pointer; }
+        .error { color: red; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>登录 Majdata</h2>
+        <input type="text" id="username" placeholder="用户名" />
+        <input type="password" id="password" placeholder="密码" />
+        <button id="loginBtn">登录</button>
+        <div id="error" class="error"></div>
+    </div>
+    <script>
+        document.getElementById('loginBtn').addEventListener('click', function() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            if (!username) {
+                document.getElementById('error').innerText = '请输入用户名';
+                return;
+            }
+            fetch('/api/account/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(res => {
+                if (res.ok) {
+                    // 登录成功，跳转回确认页
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const authId = urlParams.get('auth-id');
+                    if (authId) {
+                        window.location.href = '/auth/confirm?auth-id=' + encodeURIComponent(authId);
+                    } else {
+                        window.location.href = '/';
+                    }
+                } else {
+                    return res.text().then(text => { throw new Error(text || '登录失败'); });
+                }
+            })
+            .catch(err => {
+                document.getElementById('error').innerText = err.message;
+            });
+        });
+    </script>
+</body>
+</html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
 }
