@@ -11,46 +11,6 @@ import { handleOfflineRequest, syncToOriginalServer } from './offline-handler.js
 //导入扫码登录相关逻辑
 import { handleAuthRequest } from './auth-handler.js';
 
-// 从环境变量获取配置
-let rawOrigin = globalThis.ORIGIN_HOST || 'https://www.fandorabox.net';
-if (!rawOrigin.startsWith('http://') && !rawOrigin.startsWith('https://')) {
-  rawOrigin = 'https://' + rawOrigin;
-}
-const TARGET_HOST = rawOrigin;
-const TARGET_DOMAIN = new URL(TARGET_HOST).hostname;
-const PROXY_DOMAIN = globalThis.PROXY_DOMAIN || TARGET_DOMAIN;
-const FRONTEND_HOST = globalThis.FRONTEND_HOST || 'https://your-frontend.com'; // 用于二维码跳转
-const CACHE_TTL = 86400;
-const cache = caches.default;
-
-// KV 绑定
-const OFFLINE_MODE = globalThis.OFFLINE_MODE === 'true';
-const SYNC_PASSWORD = globalThis.SYNC_PASSWORD;
-const USER_DATA = globalThis.USER_DATA;
-const SESSIONS = globalThis.SESSIONS;
-const PENDING_SCORES = globalThis.PENDING_SCORES;
-const LIST_CACHE = globalThis.LIST_CACHE;
-const MACHINE_SESSIONS = globalThis.MACHINE_SESSIONS;
-const OAUTH_SESSIONS = globalThis.OAUTH_SESSIONS;
-
-const bindings = {
-  OFFLINE_MODE,
-  USER_DATA,
-  SESSIONS,
-  PENDING_SCORES,
-  LIST_CACHE,
-  MACHINE_SESSIONS,
-  OAUTH_SESSIONS
-};
-
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request, event));
-});
-
-addEventListener('scheduled', event => {
-  event.waitUntil(syncToOriginalServer(bindings, TARGET_HOST));
-});
-
 async function handleRequest(request, event) {
   try {
     const url = new URL(request.url);
@@ -133,20 +93,64 @@ async function handleRequest(request, event) {
 
     let response = await fetch(newRequest);
 
-    // 广告插入（仅 HTML）
+    // --- 开始处理响应体：域名替换和广告插入 ---
+    
+    // 确定当前代理域名（优先使用 PROXY_DOMAIN，否则从请求 URL 获取）
+    const currentDomain = PROXY_DOMAIN || new URL(request.url).hostname;
+
+    // 克隆响应以便读取 body（如果需要）
+    const responseForMod = response.clone();
+
+    // 获取 Content-Type
     const contentType = response.headers.get('Content-Type') || '';
+
+    // 判断是否为文本类型（包括 HTML、JS、JSON、CSS、XML 等）
+    const isText = contentType.startsWith('text/') || 
+                   contentType.includes('javascript') || 
+                   contentType.includes('json') || 
+                   contentType.includes('xml') || 
+                   contentType.includes('css');
+
+    let finalResponse;
+
+    if (isText) {
+      // 读取 body 文本
+      let text = await responseForMod.text();
+      
+      // 替换 www.fandorabox.net 为当前域名
+      // 构造待替换的域名（www. + 原始目标域名）
+      const targetDomainWithWww = 'www.' + TARGET_DOMAIN; // 例如 www.fandorabox.net
+      // 转义点号以用于正则
+      const escapedTarget = targetDomainWithWww.replace(/\./g, '\\.');
+      const regex = new RegExp(escapedTarget, 'g');
+      const modifiedText = text.replace(regex, currentDomain);
+
+      // 构建新的响应，保持原有状态码和头，Content-Length 将自动计算
+      finalResponse = new Response(modifiedText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+    } else {
+      // 非文本类型，直接使用原始响应
+      finalResponse = response;
+    }
+
+    // 广告插入（仅当是 HTML）
     if (contentType.includes('text/html')) {
       const rewriter = new HTMLRewriter().on('main', {
         element(element) {
           element.after(AD_CODE, { html: true });
         }
       });
-      response = rewriter.transform(response);
+      // 对 finalResponse 进行转换
+      finalResponse = rewriter.transform(finalResponse);
     }
 
-    const modifiedResponse = new Response(response.body, response);
+    // 现在 finalResponse 是最终响应，继续处理头部
+    const modifiedResponse = finalResponse;
 
-    // 处理 Set-Cookie
+    // 处理 Set-Cookie（移除 Domain 属性）
     const cookies = [];
     modifiedResponse.headers.forEach((value, key) => {
       if (key.toLowerCase() === 'set-cookie') {
@@ -161,14 +165,14 @@ async function handleRequest(request, event) {
       });
     }
 
-    // 处理重定向 Location
+    // 处理重定向 Location（将目标域名替换为代理域名）
     const location = modifiedResponse.headers.get('Location');
     if (location) {
       try {
         const locationUrl = new URL(location, TARGET_HOST);
         if (locationUrl.hostname === TARGET_DOMAIN) {
           const workerUrl = new URL(request.url);
-          workerUrl.hostname = PROXY_DOMAIN;
+          workerUrl.hostname = PROXY_DOMAIN; // 使用代理域名
           workerUrl.pathname = locationUrl.pathname;
           workerUrl.search = locationUrl.search;
           modifiedResponse.headers.set('Location', workerUrl.toString());
@@ -181,7 +185,7 @@ async function handleRequest(request, event) {
     modifiedResponse.headers.delete('Content-Security-Policy-Report-Only');
     modifiedResponse.headers.set('Access-Control-Allow-Origin', '*');
 
-    // 根路径缓存存储
+    // 根路径缓存存储（缓存修改后的响应）
     if (url.pathname === '/' && request.method === 'GET' && modifiedResponse.status === 200) {
       const responseToCache = modifiedResponse.clone();
       const newHeaders = new Headers(responseToCache.headers);
