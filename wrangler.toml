@@ -25,6 +25,10 @@ id = "60e1434d441e4268a57912b052985e6f"   # fork后替换为自己的ID
 binding = "MACHINE_SESSIONS"
 id = "112c8296674e457bafdc0e2300d37d8d"   # 替换为实际 ID
 
+[[kv_namespaces]]
+binding = "OAUTH_SESSIONS"
+id = "c634670eb8824e84afeba5fab94302fe"   # 替换为实际 ID
+
 # 同步有bug，修好再动
 # [triggers]
 # crons = ["*/30 * * * *"]  # 每30分钟尝试同步一次（可修改，不建议频率调太短或太长，太短会导致原站负载增加，太长会导致CPU时钟超过免费用量自动终止）
