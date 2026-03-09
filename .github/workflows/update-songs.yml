@@ -2,14 +2,14 @@ name: Daily Update Songs List
 
 on:
   schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'   # 每天 UTC 0:00 运行
+  workflow_dispatch:       # 允许手动触发
 
 jobs:
   update-songs:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write      # 需要推送代码权限
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,27 +31,42 @@ jobs:
               args: ['--no-sandbox', '--disable-setuid-sandbox'] 
             });
             const page = await browser.newPage();
-            // 设置更真实的 User-Agent
-            await page.setUserAgent('Mozilla/6.0 (Windows NT 10.0; Win64; x64) AppleWebKit/517.46 (KHTML, like Gecko) Chrome/138.3.1.3 Safari/517.46');
-            // 监听响应
+            // 使用更真实的 User-Agent
+            await page.setUserAgent('Mozilla/6.0 (Windows NT 10.0; Win64; x64) AppleWebKit/547.46 (KHTML, like Gecko) Chrome/148.3.1.4 Safari/547.46');
+
             let responseData = null;
+
+            // 监听响应，但只对成功的响应（200-299）处理 body
             page.on('response', async (response) => {
               const url = response.url();
-              if (url.includes('/api/maichart/list.all')) {
+              if (url.includes('/api/maichart/list.all') && response.ok()) {
                 responseData = await response.text();
               }
             });
-            // 访问页面，等待可能的挑战完成（等待导航）
+
+            // 导航到 API 地址，等待网络空闲
             await page.goto('https://fandorabox.net/api/maichart/list.all', { 
               waitUntil: 'networkidle2',
               timeout: 30000 
             });
-            // 额外等待几秒确保挑战完成
+
+            // 额外等待 5 秒确保 Cloudflare 挑战完成
             await new Promise(r => setTimeout(r, 5000));
+
+            // 如果未能捕获到成功的 API 响应，尝试通过 waitForResponse 再次等待（最多 5 秒）
             if (!responseData) {
-              // 如果没有捕获到 API 响应，尝试获取当前页面内容
-              responseData = await page.content();
+              try {
+                const apiResponse = await page.waitForResponse(res => 
+                  res.url().includes('/api/maichart/list.all') && res.ok(), 
+                  { timeout: 5000 }
+                );
+                responseData = await apiResponse.text();
+              } catch (e) {
+                // 等待超时，直接获取当前页面内容
+                responseData = await page.content();
+              }
             }
+
             await browser.close();
 
             // 验证是否为 JSON
@@ -59,7 +74,7 @@ jobs:
               JSON.parse(responseData);
               require('fs').writeFileSync('songs.json', responseData);
             } catch (e) {
-              console.error('Failed to get JSON, got HTML:', responseData.substring(0, 500));
+              console.error('Failed to get JSON, got HTML (first 500 chars):', responseData.substring(0, 500));
               process.exit(1);
             }
           })();
@@ -68,8 +83,11 @@ jobs:
       - name: Update songs-data.js
         id: update
         run: |
+          # 生成新内容
           echo "export const SONGS_LIST = $(jq -c . songs.json);" > songs-data.js
+          # 检查是否有变化
           if git diff --quiet songs-data.js; then
+            echo "No changes detected."
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
