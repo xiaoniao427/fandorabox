@@ -17,7 +17,7 @@ jobs:
       - name: Fetch latest songs list from origin
         run: |
           ORIGIN_HOST="${{ secrets.ORIGIN_HOST }}"
-          curl -s -f "${ORIGIN_HOST:-https://www.fandorabox.net}/api/maichart/list.all" -o songs.json
+          curl -s -f "https://www.fandorabox.net/api/maichart/list.all" -o songs.json
 
       - name: Update songs-data.js
         id: update
